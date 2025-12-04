@@ -1,0 +1,8 @@
+{
+  "name": "MotionMime AI",
+  "description": "Real-time cartoon puppetry powered by your webcam motion and Gemini AI character generation.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
