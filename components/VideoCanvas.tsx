@@ -1,4 +1,5 @@
-import React, { useRef, useEffect } from 'react';
+
+import React, { useRef, useEffect, useState } from 'react';
 import { PoseResults, CharacterStyle } from '../types';
 import { POSE_LANDMARKS } from '../constants';
 
@@ -13,10 +14,23 @@ const VideoCanvas: React.FC<VideoCanvasProps> = ({ poseData, characterStyle, wid
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const requestRef = useRef<number>(null);
   const poseDataRef = useRef<PoseResults | null>(poseData);
+  const [overlayImage, setOverlayImage] = useState<HTMLImageElement | null>(null);
 
   useEffect(() => {
     poseDataRef.current = poseData;
   }, [poseData]);
+
+  // Load user uploaded image when URL changes
+  useEffect(() => {
+    if (characterStyle.imageOverlay) {
+      const img = new Image();
+      img.src = characterStyle.imageOverlay;
+      img.onload = () => setOverlayImage(img);
+      img.onerror = () => setOverlayImage(null);
+    } else {
+      setOverlayImage(null);
+    }
+  }, [characterStyle.imageOverlay]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -153,7 +167,10 @@ const VideoCanvas: React.FC<VideoCanvasProps> = ({ poseData, characterStyle, wid
       const lHip = getPos(POSE_LANDMARKS.LEFT_HIP);
       const rHip = getPos(POSE_LANDMARKS.RIGHT_HIP);
       
-      if (leftShoulder.v > 0.5 && rightShoulder.v > 0.5 && lHip.v > 0.5 && rHip.v > 0.5) {
+      const torsoMode = overlayImage && characterStyle.imageMode === 'torso';
+
+      // Only draw vector torso if we are NOT in torso image mode
+      if (!torsoMode && leftShoulder.v > 0.5 && rightShoulder.v > 0.5 && lHip.v > 0.5 && rHip.v > 0.5) {
         ctx.lineJoin = 'round';
         ctx.lineWidth = outlineWidth;
         ctx.strokeStyle = outlineColor;
@@ -177,7 +194,6 @@ const VideoCanvas: React.FC<VideoCanvasProps> = ({ poseData, characterStyle, wid
            // We approximate the waist at 60% down the torso
            const topY = Math.min(leftShoulder.y, rightShoulder.y);
            const bottomY = Math.max(lHip.y, rHip.y);
-           const height = bottomY - topY;
            
            const gradient = ctx.createLinearGradient(0, topY, 0, bottomY);
            gradient.addColorStop(0, characterStyle.torsoColor);
@@ -193,6 +209,27 @@ const VideoCanvas: React.FC<VideoCanvasProps> = ({ poseData, characterStyle, wid
         ctx.fill();
         ctx.shadowBlur = 0; // Reset shadow for stroke
         ctx.stroke();
+      } else if (torsoMode && leftShoulder.v > 0.5 && rightShoulder.v > 0.5 && lHip.v > 0.5) {
+        // Draw Image Torso
+        const centerX = (leftShoulder.x + rightShoulder.x + lHip.x + rHip.x) / 4;
+        const centerY = (leftShoulder.y + rightShoulder.y + lHip.y + rHip.y) / 4;
+        
+        // Size approximation: distance between shoulders * multiplier, and shoulder to hip height
+        const widthApprox = Math.hypot(leftShoulder.x - rightShoulder.x, leftShoulder.y - rightShoulder.y);
+        const heightApprox = Math.hypot(leftShoulder.x - lHip.x, leftShoulder.y - lHip.y); // rough torso height
+        
+        const imgWidth = widthApprox * 2.0; // Make it wider than the stick
+        const imgScale = imgWidth / overlayImage.width;
+        const imgHeight = overlayImage.height * imgScale;
+
+        // Rotation: Angle of shoulders
+        const angle = Math.atan2(rightShoulder.y - leftShoulder.y, rightShoulder.x - leftShoulder.x);
+
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        ctx.rotate(angle);
+        ctx.drawImage(overlayImage, -imgWidth / 2, -imgHeight / 2, imgWidth, imgHeight);
+        ctx.restore();
       }
 
       // --- Layer 3: Arms (Foreground) ---
@@ -217,101 +254,123 @@ const VideoCanvas: React.FC<VideoCanvasProps> = ({ poseData, characterStyle, wid
          const earDist = Math.hypot(leftEar.x - rightEar.x, leftEar.y - rightEar.y);
          const headSize = Math.max(earDist * 1.8, unit * 0.6); // Min size relative to body
          
-         ctx.fillStyle = characterStyle.headColor;
-         ctx.lineWidth = outlineWidth;
-         ctx.strokeStyle = outlineColor;
+         const headMode = overlayImage && characterStyle.imageMode === 'head';
 
-         if (characterStyle.glowEffect) {
-            ctx.shadowBlur = glowBlur;
-            ctx.shadowColor = characterStyle.headColor;
-         }
+         if (headMode && leftEar.v > 0.5 && rightEar.v > 0.5) {
+            // Draw Image Head
+            const scaleFactor = 2.5; // Make the head big (Bobblehead style)
+            const imgWidth = earDist * scaleFactor;
+            const imgScale = imgWidth / overlayImage.width;
+            const imgHeight = overlayImage.height * imgScale;
 
-         if (characterStyle.headType === 'emoji' && characterStyle.headEmoji) {
-            ctx.shadowBlur = 0; // Emojis don't render well with heavy shadow
-            ctx.font = `${headSize * 2}px serif`;
-            ctx.textAlign = "center";
-            ctx.textBaseline = "middle";
-            ctx.fillText(characterStyle.headEmoji, nose.x, nose.y);
-         } 
-         else if (characterStyle.headType === 'square' || characterStyle.headType === 'robot') {
-            const half = headSize / 1.5;
-            ctx.beginPath();
-            // Rounded Rect for head
-            ctx.roundRect(nose.x - half, nose.y - half, headSize * 1.33, headSize * 1.33, 10);
-            ctx.fill();
-            ctx.shadowBlur = 0;
-            ctx.stroke();
+            // Rotation based on ears
+            const angle = Math.atan2(rightEar.y - leftEar.y, rightEar.x - leftEar.x);
 
-            // Robot Eyes
-            if (characterStyle.headType === 'robot') {
-                ctx.fillStyle = "#000"; // Black eyes
-                // Left Eye
-                ctx.fillRect(nose.x - half + (headSize*0.3), nose.y - (headSize*0.1), headSize*0.2, headSize*0.1);
-                // Right Eye
-                ctx.fillRect(nose.x + half - (headSize*0.5), nose.y - (headSize*0.1), headSize*0.2, headSize*0.1);
-            }
-         } 
-         else {
-             // Default Circle Head
-             ctx.beginPath();
-             ctx.arc(nose.x, nose.y, headSize * 0.7, 0, 2 * Math.PI);
-             ctx.fill();
-             ctx.shadowBlur = 0;
-             ctx.stroke();
-         }
+            ctx.save();
+            ctx.translate(nose.x, nose.y);
+            ctx.rotate(angle);
+            // Draw centered at nose
+            ctx.drawImage(overlayImage, -imgWidth / 2, -imgHeight / 2, imgWidth, imgHeight);
+            ctx.restore();
 
-         // --- Face Rendering (Eyes/Mouth) ---
-         // Only if not emoji and not robot (robot has its own eyes above)
-         if (characterStyle.headType !== 'emoji' && characterStyle.headType !== 'robot' && characterStyle.faceStyle !== 'none') {
-             const eyeOffsetX = headSize * 0.25;
-             const eyeOffsetY = headSize * 0.15;
-             const eyeRadius = headSize * 0.15;
+         } else if (!headMode) {
+             // Draw Vector Head
+             ctx.fillStyle = characterStyle.headColor;
+             ctx.lineWidth = outlineWidth;
+             ctx.strokeStyle = outlineColor;
 
-             ctx.fillStyle = "white";
-             ctx.strokeStyle = "black";
-             ctx.lineWidth = 2;
-             
-             // Eyes Base
-             if (characterStyle.faceStyle === 'cool') {
-                ctx.fillStyle = "black";
-                ctx.beginPath();
-                ctx.arc(nose.x - eyeOffsetX, nose.y - eyeOffsetY, eyeRadius * 1.2, 0, Math.PI * 2);
-                ctx.arc(nose.x + eyeOffsetX, nose.y - eyeOffsetY, eyeRadius * 1.2, 0, Math.PI * 2);
-                ctx.fill();
-                // Bridge
-                ctx.beginPath();
-                ctx.moveTo(nose.x - eyeOffsetX, nose.y - eyeOffsetY);
-                ctx.lineTo(nose.x + eyeOffsetX, nose.y - eyeOffsetY);
-                ctx.stroke();
-             } else {
-                // Smile or Surprised Eyes
-                // Left Eye
-                ctx.beginPath();
-                ctx.arc(nose.x - eyeOffsetX, nose.y - eyeOffsetY, eyeRadius, 0, Math.PI * 2);
-                ctx.fill(); ctx.stroke();
-                // Right Eye
-                ctx.beginPath();
-                ctx.arc(nose.x + eyeOffsetX, nose.y - eyeOffsetY, eyeRadius, 0, Math.PI * 2);
-                ctx.fill(); ctx.stroke();
-
-                // Pupils
-                ctx.fillStyle = "black";
-                ctx.beginPath();
-                ctx.arc(nose.x - eyeOffsetX, nose.y - eyeOffsetY, eyeRadius * 0.3, 0, Math.PI * 2);
-                ctx.arc(nose.x + eyeOffsetX, nose.y - eyeOffsetY, eyeRadius * 0.3, 0, Math.PI * 2);
-                ctx.fill();
+             if (characterStyle.glowEffect) {
+                ctx.shadowBlur = glowBlur;
+                ctx.shadowColor = characterStyle.headColor;
              }
 
-             // Mouth
-             ctx.beginPath();
-             if (characterStyle.faceStyle === 'surprised') {
-                 ctx.ellipse(nose.x, nose.y + headSize * 0.3, headSize * 0.1, headSize * 0.15, 0, 0, Math.PI * 2);
-                 ctx.fillStyle = "black";
+             if (characterStyle.headType === 'emoji' && characterStyle.headEmoji) {
+                ctx.shadowBlur = 0; // Emojis don't render well with heavy shadow
+                ctx.font = `${headSize * 2}px serif`;
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(characterStyle.headEmoji, nose.x, nose.y);
+             } 
+             else if (characterStyle.headType === 'square' || characterStyle.headType === 'robot') {
+                const half = headSize / 1.5;
+                ctx.beginPath();
+                // Rounded Rect for head
+                ctx.roundRect(nose.x - half, nose.y - half, headSize * 1.33, headSize * 1.33, 10);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.stroke();
+
+                // Robot Eyes
+                if (characterStyle.headType === 'robot') {
+                    ctx.fillStyle = "#000"; // Black eyes
+                    // Left Eye
+                    ctx.fillRect(nose.x - half + (headSize*0.3), nose.y - (headSize*0.1), headSize*0.2, headSize*0.1);
+                    // Right Eye
+                    ctx.fillRect(nose.x + half - (headSize*0.5), nose.y - (headSize*0.1), headSize*0.2, headSize*0.1);
+                }
+             } 
+             else {
+                 // Default Circle Head
+                 ctx.beginPath();
+                 ctx.arc(nose.x, nose.y, headSize * 0.7, 0, 2 * Math.PI);
                  ctx.fill();
-             } else {
-                 // Smile
-                 ctx.arc(nose.x, nose.y + headSize * 0.1, headSize * 0.35, 0.2 * Math.PI, 0.8 * Math.PI);
+                 ctx.shadowBlur = 0;
                  ctx.stroke();
+             }
+
+             // --- Face Rendering (Eyes/Mouth) ---
+             // Only if not emoji and not robot (robot has its own eyes above)
+             if (characterStyle.headType !== 'emoji' && characterStyle.headType !== 'robot' && characterStyle.faceStyle !== 'none') {
+                 const eyeOffsetX = headSize * 0.25;
+                 const eyeOffsetY = headSize * 0.15;
+                 const eyeRadius = headSize * 0.15;
+
+                 ctx.fillStyle = "white";
+                 ctx.strokeStyle = "black";
+                 ctx.lineWidth = 2;
+                 
+                 // Eyes Base
+                 if (characterStyle.faceStyle === 'cool') {
+                    ctx.fillStyle = "black";
+                    ctx.beginPath();
+                    ctx.arc(nose.x - eyeOffsetX, nose.y - eyeOffsetY, eyeRadius * 1.2, 0, Math.PI * 2);
+                    ctx.arc(nose.x + eyeOffsetX, nose.y - eyeOffsetY, eyeRadius * 1.2, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Bridge
+                    ctx.beginPath();
+                    ctx.moveTo(nose.x - eyeOffsetX, nose.y - eyeOffsetY);
+                    ctx.lineTo(nose.x + eyeOffsetX, nose.y - eyeOffsetY);
+                    ctx.stroke();
+                 } else {
+                    // Smile or Surprised Eyes
+                    // Left Eye
+                    ctx.beginPath();
+                    ctx.arc(nose.x - eyeOffsetX, nose.y - eyeOffsetY, eyeRadius, 0, Math.PI * 2);
+                    ctx.fill(); ctx.stroke();
+                    // Right Eye
+                    ctx.beginPath();
+                    ctx.arc(nose.x + eyeOffsetX, nose.y - eyeOffsetY, eyeRadius, 0, Math.PI * 2);
+                    ctx.fill(); ctx.stroke();
+
+                    // Pupils
+                    ctx.fillStyle = "black";
+                    ctx.beginPath();
+                    ctx.arc(nose.x - eyeOffsetX, nose.y - eyeOffsetY, eyeRadius * 0.3, 0, Math.PI * 2);
+                    ctx.arc(nose.x + eyeOffsetX, nose.y - eyeOffsetY, eyeRadius * 0.3, 0, Math.PI * 2);
+                    ctx.fill();
+                 }
+
+                 // Mouth
+                 ctx.beginPath();
+                 if (characterStyle.faceStyle === 'surprised') {
+                     ctx.ellipse(nose.x, nose.y + headSize * 0.3, headSize * 0.1, headSize * 0.15, 0, 0, Math.PI * 2);
+                     ctx.fillStyle = "black";
+                     ctx.fill();
+                 } else {
+                     // Smile
+                     ctx.arc(nose.x, nose.y + headSize * 0.1, headSize * 0.35, 0.2 * Math.PI, 0.8 * Math.PI);
+                     ctx.stroke();
+                 }
              }
          }
       }
@@ -323,7 +382,7 @@ const VideoCanvas: React.FC<VideoCanvasProps> = ({ poseData, characterStyle, wid
     return () => {
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
     };
-  }, [characterStyle, width, height]);
+  }, [characterStyle, width, height, overlayImage]);
 
   return (
     <canvas 

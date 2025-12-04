@@ -1,5 +1,6 @@
+
 import React, { useState, useEffect } from 'react';
-import { FaVideo, FaVideoSlash, FaRobot, FaMagic, FaPalette, FaUserAstronaut, FaLock, FaSave, FaTrash } from 'react-icons/fa';
+import { FaVideo, FaVideoSlash, FaRobot, FaMagic, FaPalette, FaUserAstronaut, FaLock, FaSave, FaTrash, FaImage, FaTimes } from 'react-icons/fa';
 import PoseDetector from './components/PoseDetector';
 import VideoCanvas from './components/VideoCanvas';
 import { PoseResults, CharacterStyle, GameState } from './types';
@@ -61,6 +62,11 @@ const App: React.FC = () => {
     setIsGenerating(true);
     try {
       const newStyle = await generateCharacterStyle(prompt);
+      // Preserve existing image if one is set
+      if (characterStyle.imageOverlay) {
+        newStyle.imageOverlay = characterStyle.imageOverlay;
+        newStyle.imageMode = characterStyle.imageMode;
+      }
       setCharacterStyle(newStyle);
     } catch (e) {
       alert("Failed to generate character. Please check your API key or try again.");
@@ -70,19 +76,15 @@ const App: React.FC = () => {
   };
 
   const handleSaveStyle = () => {
-    // Simple check to prevent exact duplicates in succession
     const isDuplicate = savedStyles.some(s => JSON.stringify(s) === JSON.stringify(characterStyle));
-    if (isDuplicate) {
-        // Optionally alert user or just ignore
-        return; 
-    }
+    if (isDuplicate) return; 
     const newSaved = [...savedStyles, characterStyle];
     setSavedStyles(newSaved);
     localStorage.setItem('motionMime_savedStyles', JSON.stringify(newSaved));
   };
 
   const handleDeleteStyle = (index: number, e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevent activating the style while deleting
+    e.stopPropagation();
     const newSaved = savedStyles.filter((_, i) => i !== index);
     setSavedStyles(newSaved);
     localStorage.setItem('motionMime_savedStyles', JSON.stringify(newSaved));
@@ -93,6 +95,36 @@ const App: React.FC = () => {
     if (gameState === GameState.IDLE && results.poseLandmarks) {
       setGameState(GameState.ACTIVE);
     }
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        const result = evt.target?.result as string;
+        setCharacterStyle(prev => ({
+          ...prev,
+          imageOverlay: result,
+          imageMode: 'head' // Default to head mode
+        }));
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const toggleImageMode = () => {
+    setCharacterStyle(prev => ({
+      ...prev,
+      imageMode: prev.imageMode === 'head' ? 'torso' : 'head'
+    }));
+  };
+
+  const clearImage = () => {
+    setCharacterStyle(prev => {
+      const { imageOverlay, imageMode, ...rest } = prev;
+      return rest as CharacterStyle;
+    });
   };
 
   // Landing Screen
@@ -180,6 +212,38 @@ const App: React.FC = () => {
         {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto px-6 pb-6 space-y-6">
           
+          {/* Custom Image Upload Section */}
+          <div className="space-y-3">
+             <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
+               <FaImage /> Custom Puppet Image
+             </h3>
+             
+             {!characterStyle.imageOverlay ? (
+               <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-slate-600 border-dashed rounded-lg cursor-pointer bg-slate-700 hover:bg-slate-600 transition-colors">
+                 <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                    <p className="mb-1 text-xs text-slate-400 font-semibold">Click to upload image</p>
+                    <p className="text-[10px] text-slate-500">Use transparent PNG for best results</p>
+                 </div>
+                 <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
+               </label>
+             ) : (
+               <div className="bg-slate-700 p-3 rounded-lg space-y-3 border border-slate-600">
+                  <div className="flex items-center gap-3">
+                    <img src={characterStyle.imageOverlay} alt="Overlay" className="w-12 h-12 rounded object-cover bg-black/50" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold truncate text-white">Image Active</p>
+                      <button onClick={toggleImageMode} className="text-[10px] text-teal-400 hover:text-teal-300 underline mt-1">
+                        Mode: {characterStyle.imageMode === 'head' ? 'Attach to Head' : 'Attach to Torso'}
+                      </button>
+                    </div>
+                    <button onClick={clearImage} className="text-slate-400 hover:text-red-400 p-2">
+                      <FaTimes />
+                    </button>
+                  </div>
+               </div>
+             )}
+          </div>
+
           {/* Presets Section */}
           <div className="space-y-3">
              <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">

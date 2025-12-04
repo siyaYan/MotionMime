@@ -1,3 +1,4 @@
+
 export interface Landmark {
   x: number;
   y: number;
@@ -33,6 +34,10 @@ export interface CharacterStyle {
   // Joints/Extremities
   jointColor: string; // Elbow/Knee color
   shoeColor?: string; // Specific color for feet
+  
+  // Custom Image Upload
+  imageOverlay?: string; // Data URL of uploaded image
+  imageMode?: 'head' | 'torso'; // Where to apply the image
   
   strokeWidth: number;
   glowEffect: boolean;
